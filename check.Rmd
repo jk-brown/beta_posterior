@@ -1,0 +1,376 @@
+---
+title: "Testing Beta Posterior Idea"
+author: "Joe Brown"
+date: "2024-01-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Goal 
+
+The goal of this analysis is to test the use of `matilda` for producing a posterior distribution of parameter values that are updated by observed data.
+
+Thoughts:
+If we sample the posterior (?) or use stats from the posterior to produce a new sample of parameters, how does the result affect `hector` projections?
+
+Steps of the analysis:
+
+1. Set up a Hector instance in `matilda` that propagates `beta` uncertainty through the model. 
+
+2. Weight the model results based on historic CO2 concentration and temperature (really need to get OHC in here as well). What would it take to constrain future projections (CMIP6?)?
+
+3. The weights are likelihood probabilities. Use them to complete Bayes theorem ($P(\theta)$ x $L(\theta | obs)$ $\propto$ $P(\theta | obs)$).
+
+4. The result of step 3 will be a posterior distribution that will need scaled (scaling factor currently unknown, will be testing this out).
+
+5. Plot the results (prior vs. posterior) and compute mean from the posterior to compare with prior.
+
+# Analysis
+
+## Load libraries 
+```{r}
+# librairies
+library(ggplot2)
+library(matilda)
+library(parallel)
+```
+
+
+## Initiate a Hector core
+
+For this analysis I am going to use ssp245:
+
+```{r}
+
+ini_245 <- system.file("input/hector_ssp245.ini", package = "hector")
+
+```
+
+Initiate a core using the ini:
+
+```{r}
+
+core245 <- newcore(ini_245, name = "ssp245")
+
+```
+
+## Produce parameter values
+
+Use the core object to sample param values n times:
+
+```{r}
+
+n = 10000
+
+set.seed(123)
+
+init_param <- generate_params(core245, n)
+
+```
+
+Only interested in `beta` for this analysis, this distribution will represent the prior `beta` distribution:
+
+```{r}
+
+beta_prior <- init_param[1]
+
+```
+
+## Run the model
+
+I want to run the model using parallel computing.
+
+Therefore, split `beta_prior` into 7 chunks - store as a list of df elements:
+
+```{r}
+
+beta_prior_list <- split(beta_prior, 1:10)
+
+```
+
+Use the list to run Hector for each of `beta` prior chunk in the list:
+
+```{r}
+
+cl <- makeCluster(detectCores() - 1)
+
+clusterExport(cl, c("iterate_model",
+                    "beta_prior_list",
+                    "newcore",
+                    "ini_245"))
+
+start <- proc.time()
+
+result <- parLapply(cl, beta_prior_list, function(chunk) {
+  
+  core = newcore(ini_245, name = "ssp245")
+  
+  iterate_model(core = core,
+                params = chunk, 
+                save_years = 1850:2030,
+                save_vars = c("CO2_concentration", 
+                              "gmst")
+                )
+  
+})
+
+stopCluster(cl)
+
+proc.time() - start
+
+
+```
+
+```{r}
+# Starting at the second element in the result list
+for (i in 2:length(result)) {
+  
+  # calculate the max value of the previous element in the result list
+  max_run_number <- max(result[[i - 1]]$run_number)
+  
+  # Add the max value of the previous element to the run_number of the current 
+  # element to get an updated run_number that is continuous from the previous element.
+  result[[i]]$run_number <- result[[i]]$run_number + max_run_number
+
+}
+
+```
+
+Bringing the results back together to get the full hector result:
+
+```{r}
+# use rbind to bind the dfs in result to make one df of all results
+result_df <- do.call(rbind, result)
+
+```
+
+Score the result df using the temperature and co2 criterion. List those results and then weight using multiple criteria
+
+```{r}
+compute_wts <- function(df) {
+  
+  scores_gmst <- score_runs(df, 
+                            criterion = criterion_gmst_obs(),
+                            score_function = score_bayesian)
+  
+  scores_co2 <- score_runs(df, 
+                           criterion = criterion_co2_obs(),
+                           score_function = score_bayesian)
+  
+  score_list = list(scores_gmst, scores_co2)
+  
+  mc_weights = multi_criteria_weighting(scores_list = score_list)
+  
+}
+
+likelihood_wts = compute_wts(result_df)
+
+```
+
+Combine the likelihood weights with the df containing the prior `beta` distribution
+
+```{r}
+beta_prior$run_number <- 1:10000
+
+beta_likelihood <- merge(beta_prior, likelihood_wts, by = "run_number")
+```
+
+Compute the posterior, scaled_likelihood, and scaled_posterior columns
+
+```{r}
+compute_posterior <- function(df) {
+  
+  names(df)[2] <- "param_prior"
+  
+  names(df)[3] <- "likelihood_wt"
+  
+  df$posterior <- df$param_prior * df$likelihood_wt
+  
+  df$scaled_posterior <- df$posterior * n
+  
+  return(df)
+  
+}
+
+beta_distributions <- compute_posterior(beta_likelihood)
+```
+
+plot the results to compare the prior and the posterior:
+```{r}
+ggplot(data = beta_distributions) +
+  geom_density(
+    aes(x = param_prior),
+    color = "red",
+    linewidth = 0.7) +
+  geom_density(
+    aes(x = scaled_posterior),
+    color ="blue",
+    linewidth = 0.7) +
+  theme_light() +
+  labs(title = "Prior and Posterior Distribution of Beta",
+       x = "Beta - CO2 fertilization factor")
+```
+```{r}
+co2_metric <- new_metric(CONCENTRATIONS_CO2(), years = 2023, mean)
+median_co2_24 <- metric_calc(result_df, co2_metric)
+mean(median_co2_24$metric_result)
+```
+
+# Completing similar analysis with uniform distribution on beta
+
+## Produce parameter values
+
+Define a unifrom prior beta parameter of (0.15-2) and n times:
+
+```{r}
+
+n = 100000
+
+set.seed(123)
+
+beta_prior_unif <- 
+  data.frame(
+    BETA = runif(n, min = 0.15, max = 2)
+    ) 
+
+```
+
+## Run the model
+
+I want to run the model using parallel computing.
+
+Therefore, split `beta_uniform_prior` into 10 chunks - store as a list of df elements:
+
+```{r}
+
+beta_list_unif <- split(beta_prior_unif, 1:100)
+
+```
+
+Use the list to run Hector for each of `beta` uniform prior chunk in the list:
+
+```{r}
+
+cl <- makeCluster(detectCores() - 1)
+
+clusterExport(cl, c("iterate_model",
+                    "beta_list_unif",
+                    "newcore",
+                    "ini_245"))
+
+start <- proc.time()
+
+result_unif <-
+  parLapply(cl, beta_list_unif, function(chunk) {
+    core = newcore(ini_245, name = "ssp245")
+    
+    iterate_model(
+      core = core,
+      params = chunk,
+      save_years = 1850:2025,
+      save_vars = c("CO2_concentration",
+                    "gmst")
+    )
+    
+  })
+
+stopCluster(cl)
+
+proc.time() - start
+
+
+```
+
+```{r}
+# Starting at the second element in the result list
+for (i in 2:length(result_unif)) {
+  
+  # calculate the max value of the previous element in the result list
+  max_run_number <- max(result_unif[[i - 1]]$run_number)
+  
+  # Add the max value of the previous element to the run_number of the current 
+  # element to get an updated run_number that is continuous from the previous element.
+  result_unif[[i]]$run_number <- result_unif[[i]]$run_number + max_run_number
+
+}
+
+```
+
+Bringing the results back together to get the full hector result:
+
+```{r}
+# use rbind to bind the dfs in result to make one df of all results
+result_unif_df <- do.call(rbind, result_unif)
+
+```
+
+Score the result df using the temperature and co2 criterion. List those results and then weight using multiple criteria
+
+```{r}
+compute_wts <- function(df) {
+  
+  scores_gmst <- score_runs(df, 
+                            criterion = criterion_gmst_obs(),
+                            score_function = score_bayesian)
+  
+  scores_co2 <- score_runs(df, 
+                           criterion = criterion_co2_obs(),
+                           score_function = score_bayesian)
+  
+  score_list = list(scores_gmst, scores_co2)
+  
+  mc_weights = multi_criteria_weighting(scores_list = score_list)
+  
+}
+
+likelihood_wts_unif = compute_wts(result_unif_df)
+
+```
+
+Combine the likelihood weights with the df containing the prior `beta` distribution
+
+```{r}
+beta_prior_unif$run_number <- 1:100000
+
+beta_likelihood_unif <- merge(beta_prior_unif, likelihood_wts_unif, by = "run_number")
+```
+
+Compute the posterior, scaled_likelihood, and scaled_posterior columns
+
+```{r}
+compute_posterior <- function(df) {
+  
+  names(df)[2] <- "param_prior"
+  
+  names(df)[3] <- "likelihood_wt"
+  
+  df$posterior <- df$param_prior * df$likelihood_wt
+  
+  df$scaled_posterior <- df$posterior * n
+  
+  return(df)
+  
+}
+
+beta_distributions_unif <- compute_posterior(beta_likelihood_unif)
+```
+
+plot the results to compare the prior and the posterior:
+```{r}
+ggplot(data = beta_distributions_unif) +
+  geom_density(
+    aes(x = param_prior),
+    color = "red",
+    linewidth = 0.7) +
+  geom_density(
+    aes(x = scaled_posterior),
+    color ="blue",
+    linewidth = 0.7) +
+  xlim(-1, 3) +
+  theme_light() +
+  labs(title = "Prior and Posterior Distribution of Beta",
+       x = "Beta - CO2 fertilization factor")
+```
