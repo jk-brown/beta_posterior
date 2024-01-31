@@ -87,7 +87,7 @@ Therefore, split `beta_prior` into 7 chunks - store as a list of df elements:
 
 ```{r}
 
-beta_prior_list <- split(beta_prior, 1:10)
+beta_prior_list <- split(beta_prior, 1:100)
 
 ```
 
@@ -173,7 +173,7 @@ likelihood_wts = compute_wts(result_df)
 Combine the likelihood weights with the df containing the prior `beta` distribution
 
 ```{r}
-beta_prior$run_number <- 1:10000
+beta_prior$run_number <- 1:n
 
 beta_likelihood <- merge(beta_prior, likelihood_wts, by = "run_number")
 ```
@@ -210,9 +210,14 @@ ggplot(data = beta_distributions) +
     color ="blue",
     linewidth = 0.7) +
   theme_light() +
+  xlim(-1, 8) +
   labs(title = "Prior and Posterior Distribution of Beta",
        x = "Beta - CO2 fertilization factor")
+
+ggsave("informed_beta_prior.png",
+       device = "png")
 ```
+
 ```{r}
 co2_metric <- new_metric(CONCENTRATIONS_CO2(), years = 2023, mean)
 median_co2_24 <- metric_calc(result_df, co2_metric)
@@ -227,14 +232,17 @@ Define a unifrom prior beta parameter of (0.15-2) and n times:
 
 ```{r}
 
-n = 100000
+n = 10000
 
 set.seed(123)
 
 beta_prior_unif <- 
   data.frame(
-    BETA = runif(n, min = 0.15, max = 2)
-    ) 
+    BETA = runif(n, 0.15, 2)) 
+
+ggplot(data = beta_prior_unif) +
+  geom_density(aes(x = BETA)) +
+  xlim(-1, 3)
 
 ```
 
@@ -254,7 +262,7 @@ Use the list to run Hector for each of `beta` uniform prior chunk in the list:
 
 ```{r}
 
-cl <- makeCluster(detectCores() - 1)
+cl <- makeCluster(detectCores())
 
 clusterExport(cl, c("iterate_model",
                     "beta_list_unif",
@@ -265,12 +273,13 @@ start <- proc.time()
 
 result_unif <-
   parLapply(cl, beta_list_unif, function(chunk) {
+    
     core = newcore(ini_245, name = "ssp245")
     
     iterate_model(
       core = core,
       params = chunk,
-      save_years = 1850:2025,
+      save_years = 1840:2024,
       save_vars = c("CO2_concentration",
                     "gmst")
     )
@@ -315,11 +324,11 @@ compute_wts <- function(df) {
   scores_gmst <- score_runs(df, 
                             criterion = criterion_gmst_obs(),
                             score_function = score_bayesian)
-  
+  scores_gmst <- na.omit(scores_gmst)
   scores_co2 <- score_runs(df, 
                            criterion = criterion_co2_obs(),
                            score_function = score_bayesian)
-  
+  scores_co2 <- na.omit(scores_co2)
   score_list = list(scores_gmst, scores_co2)
   
   mc_weights = multi_criteria_weighting(scores_list = score_list)
@@ -333,7 +342,7 @@ likelihood_wts_unif = compute_wts(result_unif_df)
 Combine the likelihood weights with the df containing the prior `beta` distribution
 
 ```{r}
-beta_prior_unif$run_number <- 1:100000
+beta_prior_unif$run_number <- 1:n
 
 beta_likelihood_unif <- merge(beta_prior_unif, likelihood_wts_unif, by = "run_number")
 ```
@@ -371,6 +380,9 @@ ggplot(data = beta_distributions_unif) +
     linewidth = 0.7) +
   xlim(-1, 3) +
   theme_light() +
-  labs(title = "Prior and Posterior Distribution of Beta",
+  labs(title = "Prior (red) and Posterior (blue) Distribution of Beta",
        x = "Beta - CO2 fertilization factor")
+
+ggsave("uniform_beta_prior.png",
+       device = "png")
 ```
