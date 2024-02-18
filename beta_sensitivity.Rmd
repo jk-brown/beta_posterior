@@ -89,7 +89,6 @@ beta_obs <- beta +
   data = obs_dat, aes(x = year, y = value_obs),
   color = "red",
   linewidth = 1,
-  linetype = "dashed"
 ) +
   labs(
     title = "Sensitivity of CO2 Concentrations to CO2 Fertilization Levels",
