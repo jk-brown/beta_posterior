@@ -9,6 +9,13 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Libraries
+```{r}
+library(matilda)
+library(tidyverse)
+```
+
+
 ## Assign parameter values
 
 Define a unifrom prior beta parameter of (0.15-2) and n times:
@@ -66,8 +73,7 @@ ggplot(data = beta_result_subset) +
         color = BETA,
         group = BETA),
     linewidth = 0.7) +
-  scale_color_viridis_d() +
-  facet_wrap(~variable, scales = "free_y")
+  scale_color_viridis_d()
 beta
 
 # Creates observed data frame - this  can be added as a layer to the plot
@@ -84,8 +90,20 @@ beta_obs <- beta +
   color = "red",
   linewidth = 1,
   linetype = "dashed"
-)
+) +
+  labs(
+    title = "Sensitivity of CO2 Concentrations to CO2 Fertilization Levels",
+    x = "Year",
+    y = "CO2 Concentration (ppm)") +
+  theme_grey(base_size = 14)
 beta_obs
+
+ggsave("beta_sensitivity_co2.png",
+       beta_obs,
+       device = "png",
+       width = 10,
+       height = 10,
+       units = "in")
 ```
 
 ```{r}
@@ -116,10 +134,24 @@ obs_dat_temp <- data.frame(
 # Add observed CO2 values to aid visualization of most plausible models
 beta_obs_temp <- beta_temp + 
   geom_line(
-  data = obs_dat_temp, aes(x = year, y = value_obs),
-  color = "red",
-  linewidth = 1
-)
+    data = obs_dat_temp, aes(x = year, y = value_obs),
+    color = "red",
+    linewidth = 1
+  ) +
+  labs(
+    title = "Sensitivity of GMST to CO2 Fertilization Levels",
+    x = "Year",
+    y = "Anomaly (C)") +
+  theme_grey(base_size = 14)
 beta_obs_temp
+
+ggsave("beta_sensitivity_temp.png",
+       beta_obs_temp,
+       device = "png",
+       width = 10,
+       height = 10,
+       units = "in")
+
+
 ```
 
