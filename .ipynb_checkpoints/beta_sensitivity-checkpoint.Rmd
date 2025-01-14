@@ -1,0 +1,156 @@
+---
+title: "beta sensitivity"
+author: "Joe Brown"
+date: "2024-01-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+```{r}
+library(matilda)
+library(tidyverse)
+```
+
+
+## Assign parameter values
+
+Define a unifrom prior beta parameter of (0.15-2) and n times:
+
+```{r}
+
+ini <- system.file("input/hector_ssp245.ini", package = "hector")
+
+beta_values <- 
+  data.frame(
+    BETA = c(seq(0.15, 0.55, length.out = 5), 
+             seq(0.7, 2, length.out = 5))
+    ) 
+
+```
+
+## Run the model
+
+Use the list to run Hector for each of `beta` uniform prior chunk in the list:
+
+```{r}
+core = newcore(ini, name = "ssp245")
+
+beta_result <- iterate_model(
+  core = core,
+  params = beta_values,
+  save_years = 1840:2024,
+  save_vars = c("CO2_concentration",
+                "gmst")
+)
+
+```
+
+Combine the likelihood weights with the df containing the prior `beta` distribution
+
+```{r}
+beta_values$run_number <- 1:10
+
+```
+
+## Plotting Hector results (temperature and CO2 with different beta values )
+```{r}
+# Filter for spin-up
+beta_merge <- merge(beta_result, beta_values, by = "run_number")
+beta_result_subset <- subset(beta_merge, 
+                             year >= 1959 & 
+                               variable == "CO2_concentration")
+beta_result_subset$BETA <- as.factor(beta_result_subset$BETA)
+
+beta <- 
+ggplot(data = beta_result_subset) +
+  geom_line(
+    aes(x = year, 
+        y = value,
+        color = BETA,
+        group = BETA),
+    linewidth = 0.7) +
+  scale_color_viridis_d()
+beta
+
+# Creates observed data frame - this  can be added as a layer to the plot
+# But currently only includes data from 1950-2023
+obs_dat <- data.frame(
+  year = criterion_co2_obs()$year,
+  value_obs = criterion_co2_obs()$obs_values
+)
+
+# Add observed CO2 values to aid visualization of most plausible models
+beta_obs <- beta + 
+  geom_line(
+  data = obs_dat, aes(x = year, y = value_obs),
+  color = "red",
+  linewidth = 1,
+) +
+  labs(
+    title = "Sensitivity of CO2 Concentrations to CO2 Fertilization Levels",
+    x = "Year",
+    y = "CO2 Concentration (ppm)") +
+  theme_grey(base_size = 14)
+beta_obs
+
+ggsave("beta_sensitivity_co2.png",
+       beta_obs,
+       device = "png",
+       width = 10,
+       height = 10,
+       units = "in")
+```
+
+```{r}
+# Filter for spin-up
+beta_result_subset_temp <- subset(beta_merge, 
+                             year >= 1950 & 
+                               variable == "gmst")
+beta_result_subset_temp$BETA <- as.factor(beta_result_subset_temp$BETA)
+
+beta_temp <- 
+ggplot(data = beta_result_subset_temp) +
+  geom_line(
+    aes(x = year, 
+        y = value,
+        color = BETA,
+        group = BETA),
+    linewidth = 0.7) +
+  scale_color_viridis_d()
+beta_temp
+
+# Creates observed data frame - this  can be added as a layer to the plot
+# But currently only includes data from 1950-2023
+obs_dat_temp <- data.frame(
+  year = criterion_gmst_obs()$year,
+  value_obs = criterion_gmst_obs()$obs_values
+)
+
+# Add observed CO2 values to aid visualization of most plausible models
+beta_obs_temp <- beta_temp + 
+  geom_line(
+    data = obs_dat_temp, aes(x = year, y = value_obs),
+    color = "red",
+    linewidth = 1
+  ) +
+  labs(
+    title = "Sensitivity of GMST to CO2 Fertilization Levels",
+    x = "Year",
+    y = "Anomaly (C)") +
+  theme_grey(base_size = 14)
+beta_obs_temp
+
+ggsave("beta_sensitivity_temp.png",
+       beta_obs_temp,
+       device = "png",
+       width = 10,
+       height = 10,
+       units = "in")
+
+
+```
+
